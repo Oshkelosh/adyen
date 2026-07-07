@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf_field with context %}
+
+{% block title %}Adyen Settings{% endblock %}
+
+{% block content %}
+<h1>Adyen Payments</h1>
+
+<div class="card">
+    <h2>Configuration</h2>
+    <form method="post" action="/admin/payments/adyen/save" class="form">
+        {{ csrf_field() }}
+        <div class="form-group">
+            <label for="api_key">API Key</label>
+            <input type="password" id="api_key" name="api_key"
+                   value="{{ config.get('api_key', '') }}" />
+        </div>
+        <div class="form-group">
+            <label for="merchant_account">Merchant Account</label>
+            <input type="text" id="merchant_account" name="merchant_account"
+                   value="{{ config.get('merchant_account', '') }}" />
+        </div>
+        <div class="form-group">
+            <label for="client_key">Client Key</label>
+            <input type="text" id="client_key" name="client_key"
+                   value="{{ config.get('client_key', '') }}" />
+        </div>
+        <div class="form-group">
+            <label for="webhook_hmac_key">Webhook HMAC Key</label>
+            <input type="password" id="webhook_hmac_key" name="webhook_hmac_key"
+                   value="{{ config.get('webhook_hmac_key', '') }}" />
+        </div>
+        <div class="form-group">
+            <label for="environment">Environment</label>
+            <select id="environment" name="environment">
+                <option value="test" {% if config.get('environment', 'test') == 'test' %}selected{% endif %}>Test</option>
+                <option value="live" {% if config.get('environment') == 'live' %}selected{% endif %}>Live</option>
+            </select>
+        </div>
+        <div class="alert alert--info" style="margin-bottom:1em;">
+            Checkout redirects use your <a href="/admin/settings">Site URL</a> automatically.
+            Clear override fields below to use automatic URLs.
+        </div>
+        <details style="margin-bottom:1em;">
+            <summary>Advanced redirect URL overrides</summary>
+            <div class="form-group" style="margin-top:1em;">
+                <label for="return_url">Return URL override</label>
+                <input type="text" id="return_url" name="return_url"
+                       value="{{ config.get('return_url', '') }}"
+                       placeholder="Leave blank for automatic URL" />
+            </div>
+            <div class="form-group">
+                <label for="cancel_url">Cancel URL override</label>
+                <input type="text" id="cancel_url" name="cancel_url"
+                       value="{{ config.get('cancel_url', '') }}"
+                       placeholder="Leave blank for automatic URL" />
+            </div>
+        </details>
+        <div class="form-group">
+            <label>
+                <input type="checkbox" name="is_enabled" {% if addon and addon.is_enabled %}checked{% endif %} />
+                Enable this payment processor
+            </label>
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="btn btn--primary">Save Configuration</button>
+        </div>
+    </form>
+</div>
+
+<div class="card" style="margin-top:1.5em;">
+    <h2>Webhook Endpoint</h2>
+    <code>{{ request.base_url }}api/v1/payments/adyen/webhook</code>
+</div>
+{% endblock %}
