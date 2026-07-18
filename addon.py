@@ -6,17 +6,39 @@ Collects payments via Adyen Checkout and handles webhooks.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal
+import base64
+import binascii
+import hashlib
+import hmac
+import json
+from typing import Any, Dict, List, Literal, Mapping
 
 import httpx
 from fastapi import APIRouter
 from pydantic import BaseModel, Field, SecretStr
 
 from app.addons.payments.base import PaymentAddon
-from app.addons.payments.helpers import effective_redirect_url, extract_order_id, mock_checkout
+from app.addons.payments.helpers import create_payment_error, effective_redirect_url, extract_order_id, mock_checkout
 from schemas.payment import PaymentWebhookOutcome
 from app.addons.log import info, warning
 from app.addons.config_serialization import dump_addon_config
+
+
+def _adyen_hmac_payload(item: dict[str, Any]) -> str:
+    """Build Adyen's HMAC signing string from a NotificationRequestItem."""
+    amount = item.get("amount", {}) or {}
+    fields = [
+        str(item.get("pspReference", "")),
+        str(item.get("originalReference", "")),
+        str(item.get("merchantAccountCode", "")),
+        str(item.get("merchantReference", "")),
+        str(amount.get("value", "")),
+        str(amount.get("currency", "")),
+        str(item.get("eventCode", "")),
+        str(item.get("success", "")),
+    ]
+    escaped = [f.replace("\\", "\\\\").replace(":", "\\:") for f in fields]
+    return ":".join(escaped)
 
 AdyenEnvironment = Literal["test", "live"]
 
@@ -168,7 +190,7 @@ class AdyenAddon(PaymentAddon):
                 }
         except Exception as exc:
             warning("Adyen", "create_payment error: {}", exc)
-            return mock_checkout("adyen", order_id, amount, currency)
+            return create_payment_error("adyen", exc, order_id)
 
     async def confirm_payment(self, payment_id: str) -> Dict[str, Any]:
         status = await self.get_payment_status(payment_id)
@@ -233,6 +255,47 @@ class AdyenAddon(PaymentAddon):
 
     def webhook_signature_header(self) -> str:
         return "hmacsignature"
+
+    async def verify_webhook(
+        self,
+        *,
+        headers: Mapping[str, str],
+        body: bytes,
+    ) -> bool:
+        """Verify the Adyen HMAC signature carried in the notification item."""
+        del headers
+        if not self._webhook_hmac_key:
+            warning("Adyen", "verify_webhook skipped: HMAC key not configured")
+            return False
+        try:
+            key = binascii.unhexlify(self._webhook_hmac_key)
+        except (binascii.Error, ValueError):
+            warning("Adyen", "verify_webhook: HMAC key is not valid hex")
+            return False
+        try:
+            payload = json.loads(body.decode("utf-8"))
+            items = payload.get("notificationItems", [])
+            if not items:
+                return False
+            verified_any = False
+            for entry in items:
+                item = entry.get("NotificationRequestItem", {}) or {}
+                provided = str(
+                    (item.get("additionalData") or {}).get("hmacSignature", "")
+                )
+                if not provided:
+                    return False
+                signing_string = _adyen_hmac_payload(item).encode("utf-8")
+                expected = base64.b64encode(
+                    hmac.new(key, signing_string, hashlib.sha256).digest()
+                ).decode("utf-8")
+                if not hmac.compare_digest(expected, provided):
+                    return False
+                verified_any = True
+            return verified_any
+        except Exception as exc:
+            warning("Adyen", "verify_webhook error: {}", exc)
+            return False
 
     async def parse_webhook(
         self, payload: Dict[str, Any], signature: str
